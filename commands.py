@@ -57,6 +57,9 @@ def parse(user_input: str, username: str, current_room: Optional[str]) -> Comman
     cmd = parts[0][1:]  # remove the "/"
 
     try:
+        if cmd == "help":
+            pass
+
         if cmd == "all":
             return Command(user_input, _broadcast(username, " ".join(parts[1:])))
 
@@ -91,6 +94,15 @@ def parse(user_input: str, username: str, current_room: Optional[str]) -> Comman
 
         if cmd == "exit":
             return Command(user_input, {"type": "exit"})
+        
+        if cmd == "roomid":
+            pass
+
+        if cmd == "kick":
+            pass
+
+        if cmd == "list":
+            pass
 
     except IndexError:
         # any command missing arguments ends up here
