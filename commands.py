@@ -97,10 +97,12 @@ def parse(user_input: str, username: str, current_room: Optional[str]) -> Comman
             return Command(user_input, {"type": "exit"})
         
         if cmd == "roomid":
+
             if current_room:
                 return Command(user_input, {"type": "room_id", "sender": username}, message = f"Your current room id is {current_room}", error = None)
             else:
                 return Command(user_input, {"type": "room_id", "sender": username}, error = "You are not in any room currently.", message = None)
+
         if cmd == "kick":
             pass
 
