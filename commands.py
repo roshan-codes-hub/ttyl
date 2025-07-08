@@ -17,6 +17,7 @@ class Command:
     raw: str
     payload: Optional[Dict[str, Any]]
     error: Optional[str] = None
+    message: Optional[str] = None
 
 
 def _broadcast(username: str, text: str) -> Dict[str, Any]:
@@ -57,6 +58,9 @@ def parse(user_input: str, username: str, current_room: Optional[str]) -> Comman
     cmd = parts[0][1:]  # remove the "/"
 
     try:
+        if cmd == "help":
+            pass
+
         if cmd == "all":
             return Command(user_input, _broadcast(username, " ".join(parts[1:])))
 
@@ -91,6 +95,17 @@ def parse(user_input: str, username: str, current_room: Optional[str]) -> Comman
 
         if cmd == "exit":
             return Command(user_input, {"type": "exit"})
+        
+        if cmd == "roomid":
+            if current_room:
+                return Command(user_input, {"type": "room_id", "sender": username}, message = f"Your current room id is {current_room}", error = None)
+            else:
+                return Command(user_input, {"type": "room_id", "sender": username}, error = "You are not in any room currently.", message = None)
+        if cmd == "kick":
+            pass
+
+        if cmd == "list":
+            pass
 
     except IndexError:
         # any command missing arguments ends up here

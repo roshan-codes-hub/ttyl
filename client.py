@@ -99,6 +99,10 @@ def _sender(sock: socket.socket, username: str, state: dict):
             print(f"[Error] {cmd.error}")
             continue
 
+        if cmd.message:
+            print(f"[MESSAGE] {cmd.message}")
+            continue
+
         if cmd.payload["type"] == "exit":
             try:
                 sock.sendall((json.dumps(cmd.payload) + "\n").encode())
