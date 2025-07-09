@@ -31,7 +31,6 @@ PORT = 12345
 # ---------- Shared state ----------------------------------------------------
 clients = {}        # username -> socket
 rooms = {}          # room_id -> {"name": str, "members": set[str]}
-room_admins = {}
 room_names = {}
 next_room_id = 1
 lock = threading.Lock() # Global lock for all shared data access
@@ -206,10 +205,11 @@ def handle_client(sock: socket.socket, addr):
                     with lock:
                         new_room_id = str(next_room_id)
                         next_room_id += 1
-                        rooms[new_room_id] = {"name": room_name, "members": set(), "admins": set()}
+                        rooms[new_room_id] = {"name": room_name, "members": set(), "admins": set(), "super_admin": str}
                         # Auto-join creator
                         rooms[new_room_id]["members"].add(username)
                         rooms[new_room_id]["admins"].add(username)
+                        rooms[new_room_id]["super_admin"] = username
 
                     send_json(
                         sock,
@@ -314,31 +314,93 @@ def handle_client(sock: socket.socket, addr):
                         )
                     else:
                         send_json(sock, {"type": "system", "message": "You are not in this room or room does not exist."}, target_username=username)
-                
-                # ---------- promoting a user as admin(only admins can make it) ---
-                # elif mtype == "room_promote":
-                #     sender = msg.get("sender")
-                #     target = msg.get("target")
-                #     room_id = str(msg.get("room_id"))
 
-                #     if not sender or not target or not room_id:
-                #         send_json(sock, {"type": "system", "message": "[ERROE] Ivalid kick command"})
-                #         return
-                    
-                #     if room_id not in rooms:
-                #         send_json(sock, {"type": "system", "message": f"Room {room_id} does not exixt"})
-                #         return
-                    
-                #     if sender not in rooms[room_id]["admins"]:
-                #         send_json(sock, {"type":"system", "message": "Only admins can kick users from this room."})
-                #         return
-                    
-                #     if target in rooms[room_id]["admins"]:
-                #         send_json(sock, {"type": "system", "message"})
+                # ---------- promoting/demoting a user as admin(only admins can make it) ---
+                elif mtype == "room_promote":
+                    sender = msg.get("sender")
+                    target = msg.get("target")
+                    room_id = str(msg.get("room_id"))
 
-                #     if target not in rooms[room_id]["members"]:
-                #         send_json(sock, {"type": "system", "message": f"{target} is not in the room {room_id}"})
-                #         return 
+                    if not sender or not target or not room_id:
+                        send_json(sock, {"type": "system", "message": "[ERROR] Invalid admin command."})
+                        return
+
+                    if room_id not in rooms:
+                        send_json(sock, {"type": "system", "message": f"Room {room_id} does not exist."})
+                        return
+
+                    if sender not in rooms[room_id]["admins"]:
+                        send_json(sock, {"type": "system", "message": "Only admins can modify admin privileges."})
+                        return
+
+                    if target not in rooms[room_id]["members"]:
+                        send_json(sock, {"type": "system", "message": f"{target} is not a member of the room."})
+                        return
+
+                    # Apply promote 
+                    
+                    rooms[room_id]["admins"].add(target)
+                    system_msg = f"{target} has been promoted to admin by {sender}."
+                    personal_msg = f"You are promoted to admin for the room {room_id} by {sender}."
+                    
+                    if target in clients:
+                        send_json(clients[target], {
+                            "type": "system",
+                            "message": personal_msg
+                        })
+
+                    broadcast_room(room_id, {
+                        "type": "system",
+                        "message": system_msg
+                    })
+
+                    print(f"[ADMIN] {sender} performed {mtype} on {target} in room {room_id}")
+
+
+                elif mtype == "room_demote":
+                    sender = msg.get("sender")
+                    target = msg.get("target")
+                    room_id = str(msg.get("room_id"))
+
+                    if not sender or not target or not room_id:
+                        send_json(sock, {"type": "system", "message": "[ERROR] Invalid admin command."})
+                        continue
+
+                    if room_id not in rooms:
+                        send_json(sock, {"type": "system", "message": f"Room {room_id} does not exist."})
+                        continue
+
+                    if sender not in rooms[room_id]["admins"]:
+                        send_json(sock, {"type": "system", "message": "Only admins can modify admin privileges."})
+                        continue
+
+                    if target not in rooms[room_id]["members"]:
+                        send_json(sock, {"type": "system", "message": f"{target} is not a member of the room."})
+                        continue
+
+                    # Protect super admin
+                    if target == rooms[room_id]["super_admin"]:
+                        send_json(sock, {"type": "system", "message": f"{target} cannot be removed as admin. {target} is the super admin."})
+                        continue
+                    
+                    # Apply promote 
+                    
+                    rooms[room_id]["admins"].add(target)
+                    system_msg = f"{target} has been promoted to admin by {sender}."
+                    personal_msg = f"You are promoted to admin for the room {room_id} by {sender}."
+                    
+                    if target in clients:
+                        send_json(clients[target], {
+                            "type": "system",
+                            "message": personal_msg
+                        })
+
+                    broadcast_room(room_id, {
+                        "type": "system",
+                        "message": system_msg
+                    })
+
+                    print(f"[ADMIN] {sender} performed {mtype} on {target} in room {room_id}")
 
                 # ---------- kick a target from the room ---------
                 elif mtype == "room_kick":
@@ -348,19 +410,19 @@ def handle_client(sock: socket.socket, addr):
 
                     if not sender or not target or not room_id:
                         send_json(sock, {"type": "system", "message": "[ERROE] Ivalid kick command"})
-                        return
+                        continue
                     
                     if room_id not in rooms:
                         send_json(sock, {"type": "system", "message": f"Room {room_id} does not exixt"})
-                        return
+                        continue
                     
                     if sender not in rooms[room_id]["admins"]:
                         send_json(sock, {"type":"system", "message": "Only admins can kick users from this room."})
-                        return
+                        continue
                     
                     if target not in rooms[room_id]["members"]:
                         send_json(sock, {"type": "system", "message": f"{target} is not in the room {room_id}"})
-                        return 
+                        continue
                     
                     # Remove the target from the saved lists
                     print(f"[DEBUG] Before kicking: members = {rooms[room_id]['members']}, admins = {rooms[room_id]['admins']}")

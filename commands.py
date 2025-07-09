@@ -1,4 +1,4 @@
-# commands.py
+# commands.py - Fixed version
 """
 Slash‑command handling for the terminal chat client.
 
@@ -10,7 +10,6 @@ Returned value: Command(raw, payload, error)
 
 from dataclasses import dataclass
 from typing import Dict, Any, Optional
-
 
 @dataclass
 class Command:
@@ -61,33 +60,41 @@ def parse(user_input: str, username: str, current_room: Optional[str]) -> Comman
         if cmd == "help":
             help_text = (
                 "Available Commands:\n"
-                "/whoami               - Know you username\n" 
-                "/all <msg>            - Send a global message\n"
-                "/msg <user> <msg>     - Send a private message\n"
-                "/room create <name>   - Create a new chat room\n"
-                "/room join <id>       - Join an existing room\n"
-                "/room leave           - Leave the current room\n"
-                "/room list            - List all rooms\n"
-                "/room kick <user>     - Kick the user from the room\n"
-                "/roomid               - Show current room ID\n"
-                "/exit                 - Exit the chat\n"
-                "/help                 - Show this help message"
+                "/whoami                    - Know you username\n" 
+                "/all <msg>                 - Send a global message\n"
+                "/msg <user> <msg>          - Send a private message\n"
+                "/room create <name>        - Create a new chat room\n"
+                "/room join <id>            - Join an existing room\n"
+                "/room makeadmin <user>     - Make a person in the room as admin\n"
+                "/room removeasadmin <user> - Remove a person as admin in the room\n"
+                "/room leave                - Leave the current room\n"
+                "/room list                 - List all rooms\n"
+                "/room kick <user>          - Kick the user from the room\n"
+                "/roomid                    - Show current room ID\n"
+                "/exit                      - Exit the chat\n"
+                "/help                      - Show this help message"
             )
-            return Command(user_input, {"type": "help", "sender": username}, message = help_text, error = None)
+            return Command(user_input, {"type": "help", "sender": username}, message=help_text, error=None)
         
         if cmd == "whoami":
-            return Command(user_input, {"type":"username", "sender": username}, error = None, message = f"Your are {username}")
+            return Command(user_input, {"type": "username", "sender": username}, error=None, message=f"You are {username}")
 
         if cmd == "all":
             return Command(user_input, _broadcast(username, " ".join(parts[1:])))
 
         if cmd == "msg":
+            if len(parts) < 3:
+                return Command(user_input, None, error="Usage: /msg <user> <message>")
             to = parts[1]
             text = " ".join(parts[2:])
             return Command(user_input, _private(username, to, text))
 
         if cmd == "room":
+            if len(parts) < 2:
+                return Command(user_input, None, error="Usage: /room <subcommand>")
+            
             sub = parts[1]
+            
             if sub == "create":
                 name = " ".join(parts[2:]) or "Untitled"
                 return Command(
@@ -95,65 +102,87 @@ def parse(user_input: str, username: str, current_room: Optional[str]) -> Comman
                     {"type": "room_create", "sender": username, "room_name": name},
                 )
 
-            if sub == "join":
+            elif sub == "join":
+                if len(parts) < 3:
+                    return Command(user_input, None, error="Usage: /room join <room_id>")
                 room_id = parts[2]
                 return Command(
                     user_input,
                     {"type": "room_join", "sender": username, "room_id": room_id},
                 )
 
-            if sub == "leave":
+            elif sub == "leave":
                 return Command(
                     user_input, {"type": "room_leave", "sender": username}
                 )
 
-            if sub == "list":
+            elif sub == "list":
                 return Command(user_input, {"type": "room_list", "sender": username})
             
-            if sub == "kick":
+            elif sub == "kick":
+                if len(parts) < 3:
+                    return Command(user_input, None, error="Usage: /room kick <user>")
                 target = parts[2]
                 if not current_room:
-                    return Command(user_input, None, error = None, message = "You are not in any room to kick someone.")
+                    return Command(user_input, None, error=None, message="You are not in any room to kick someone.")
                 return Command(user_input, {
                     "type": "room_kick",
                     "sender": username,
                     "target": target,
                     "room_id": current_room
-                }) #yet to implement
+                }) 
             
-            # if sub=="makeadmin":
-
-            #     if len(parts) < 3: #Invalid Syntax
-            #         return Command(user_input, None, error = "Correct Syntax: /room makeadmin <username>", message = None)
+            # FIX: Correct the logic error
+            elif sub == "makeadmin":
+                if len(parts) < 3:
+                    return Command(user_input, None, error="Usage: /room makeadmin <username>")
                 
-            #     target = parts[2]
+                target = parts[2]
+                if not current_room:
+                    return Command(user_input, None, message="You are not in a room.")
+                
+                return Command(user_input, {
+                    "type": "room_promote",
+                    "sender": username,
+                    "target": target,
+                    "room_id": current_room
+                })
+            
+            elif sub == "removeasadmin":
+                if len(parts) < 3:
+                    return Command(user_input, None, error="Usage: /room removeasadmin <username>")
+                
+                target = parts[2]
+                if not current_room:
+                    return Command(user_input, None, message="You are not in a room.")
+                
+                return Command(user_input, {
+                    "type": "room_demote",
+                    "sender": username,
+                    "target": target,
+                    "room_id": current_room
+                })
 
-            #     if not current_room:
-            #         return Command(user_input,  None, message = "You are not in a room.")
-
-            #     return Command(user_input, {
-            #         "type": "room_promote",
-            #         "sender": username,
-            #         "target": target,
-            #         "room_id": current_room
-            #     })
+            elif sub == "admins":
+                # TODO: Implement admin listing
+                return Command(user_input, None, error="Admin listing not yet implemented")
+            
+            else:
+                return Command(user_input, None, error=f"Unknown room subcommand: {sub}")
 
         if cmd == "exit":
             return Command(user_input, {"type": "exit"})
         
         if cmd == "roomid":
-
             if current_room:
-                return Command(user_input, {"type": "room_id", "sender": username}, message = f"Your current room id is {current_room}", error = None)
+                return Command(user_input, {"type": "room_id", "sender": username}, 
+                             message=f"Your current room id is {current_room}", error=None)
             else:
-                return Command(user_input, {"type": "room_id", "sender": username}, error = None, message = "You are not in any room currently.")
+                return Command(user_input, {"type": "room_id", "sender": username}, 
+                             error=None, message="You are not in any room currently.")
 
-
-        if cmd == "list":
-            pass
+        # Unknown command
+        return Command(user_input, None, error=f"Unknown command: /{cmd}")
 
     except IndexError:
-        # any command missing arguments ends up here
-        return Command(user_input, None, "Incomplete command")
-
-    return Command(user_input, None, "Unrecognized command")
+        return Command(user_input, None, error="Incomplete command")
