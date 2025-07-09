@@ -59,7 +59,24 @@ def parse(user_input: str, username: str, current_room: Optional[str]) -> Comman
 
     try:
         if cmd == "help":
-            pass
+            help_text = (
+                "Available Commands:\n"
+                "/whoami               - Know you username\n" 
+                "/all <msg>            - Send a global message\n"
+                "/msg <user> <msg>     - Send a private message\n"
+                "/room create <name>   - Create a new chat room\n"
+                "/room join <id>       - Join an existing room\n"
+                "/room leave           - Leave the current room\n"
+                "/room list            - List all rooms\n"
+                "/room kick <user>     - Kick the user from the room\n"
+                "/roomid               - Show current room ID\n"
+                "/exit                 - Exit the chat\n"
+                "/help                 - Show this help message"
+            )
+            return Command(user_input, {"type": "help", "sender": username}, message = help_text, error = None)
+        
+        if cmd == "whoami":
+            return Command(user_input, {"type":"username", "sender": username}, error = None, message = f"Your are {username}")
 
         if cmd == "all":
             return Command(user_input, _broadcast(username, " ".join(parts[1:])))
@@ -92,6 +109,34 @@ def parse(user_input: str, username: str, current_room: Optional[str]) -> Comman
 
             if sub == "list":
                 return Command(user_input, {"type": "room_list", "sender": username})
+            
+            if sub == "kick":
+                target = parts[2]
+                if not current_room:
+                    return Command(user_input, None, error = None, message = "You are not in any room to kick someone.")
+                return Command(user_input, {
+                    "type": "room_kick",
+                    "sender": username,
+                    "target": target,
+                    "room_id": current_room
+                }) #yet to implement
+            
+            # if sub=="makeadmin":
+
+            #     if len(parts) < 3: #Invalid Syntax
+            #         return Command(user_input, None, error = "Correct Syntax: /room makeadmin <username>", message = None)
+                
+            #     target = parts[2]
+
+            #     if not current_room:
+            #         return Command(user_input,  None, message = "You are not in a room.")
+
+            #     return Command(user_input, {
+            #         "type": "room_promote",
+            #         "sender": username,
+            #         "target": target,
+            #         "room_id": current_room
+            #     })
 
         if cmd == "exit":
             return Command(user_input, {"type": "exit"})
@@ -101,10 +146,8 @@ def parse(user_input: str, username: str, current_room: Optional[str]) -> Comman
             if current_room:
                 return Command(user_input, {"type": "room_id", "sender": username}, message = f"Your current room id is {current_room}", error = None)
             else:
-                return Command(user_input, {"type": "room_id", "sender": username}, error = "You are not in any room currently.", message = None)
+                return Command(user_input, {"type": "room_id", "sender": username}, error = None, message = "You are not in any room currently.")
 
-        if cmd == "kick":
-            pass
 
         if cmd == "list":
             pass
