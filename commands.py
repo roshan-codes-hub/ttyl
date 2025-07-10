@@ -70,6 +70,7 @@ def parse(user_input: str, username: str, current_room: Optional[str]) -> Comman
                 "/room leave                - Leave the current room\n"
                 "/room list                 - List all rooms\n"
                 "/room kick <user>          - Kick the user from the room\n"
+                "/room admins               - Gives the list of admins of the room\n"
                 "/roomid                    - Show current room ID\n"
                 "/exit                      - Exit the chat\n"
                 "/help                      - Show this help message"
@@ -164,9 +165,21 @@ def parse(user_input: str, username: str, current_room: Optional[str]) -> Comman
                 })
 
             elif sub == "admins":
-                # TODO: Implement admin listing
-                return Command(user_input, None, error="Admin listing not yet implemented")
+                if not current_room:
+                    return Command(user_input, None, error = "You are not in a room", message = None)
+                return Command(user_input, {"type": "room_admins", "sender": username, "room_id": current_room}, error = None, message = None)
             
+            # elif sub == "bomb":
+            #     if not current_room:
+            #         return Command(user_input, None, error = "You are not in a room")
+                
+            #     return Command(user_input, {
+            #         "type": "room_bomb",
+            #         "sender": username,
+            #         "room_id": current_room,
+            #     })
+                
+
             else:
                 return Command(user_input, None, error=f"Unknown room subcommand: {sub}")
 

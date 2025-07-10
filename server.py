@@ -205,7 +205,12 @@ def handle_client(sock: socket.socket, addr):
                     with lock:
                         new_room_id = str(next_room_id)
                         next_room_id += 1
-                        rooms[new_room_id] = {"name": room_name, "members": set(), "admins": set(), "super_admin": str}
+                        rooms[new_room_id] = {
+                            "name": room_name, 
+                            "members": set(), 
+                            "admins": set(), 
+                            "super_admin": str, 
+                            "ban": set()}
                         # Auto-join creator
                         rooms[new_room_id]["members"].add(username)
                         rooms[new_room_id]["admins"].add(username)
@@ -380,7 +385,7 @@ def handle_client(sock: socket.socket, addr):
 
                     # Protect super admin
                     if target == rooms[room_id]["super_admin"]:
-                        send_json(sock, {"type": "system", "message": f"{target} cannot be removed as admin. {target} is the super admin."})
+                        send_json(sock, {"type": "system", "message": f"{target} cannot be removed as admin. {target} is the owner of the room."})
                         continue
                     
                     # Apply promote 
@@ -424,6 +429,10 @@ def handle_client(sock: socket.socket, addr):
                         send_json(sock, {"type": "system", "message": f"{target} is not in the room {room_id}"})
                         continue
                     
+                    if target == rooms[room_id]["super_admin"]:
+                        send_json(sock, {"type": "system", "message": "Cannot kick the owner of the room"})
+                        continue
+
                     # Remove the target from the saved lists
                     print(f"[DEBUG] Before kicking: members = {rooms[room_id]['members']}, admins = {rooms[room_id]['admins']}")
 
@@ -457,7 +466,54 @@ def handle_client(sock: socket.socket, addr):
 
                     print(f"[KICK] {sender} kicked {target} from room {room_id}")
                     
+                # ----------------- List of room admins ------------------------
+                elif mtype == "room_admins":
+                    room_id = str(msg.get("room_id"))
+                    username = msg.get("sender")
+                    if not room_id:
+                        send_json(sock, {"type": "system", "message": "You are not in room"}, target_username = username)
 
+                    with lock:
+                        rinfo = rooms.get(room_id)
+
+                    if not rinfo:
+                        send_json(sock, {"type": "system", "message": f"Room {room_id} does not exist."}, target_username=username)
+                        continue
+
+                    admin_list = list(rinfo["admins"])
+
+                    send_json(sock, {"type": "system", "message" : f"Admins in room {room_id}: {admin_list}"}, target_username = username)
+
+                # ----------- Destroy the room ---------------
+                # elif mtype == "room_bomb":
+                #     sender = msg.get("sender")
+                #     room_id = str(msg.get("room_id"))
+
+                #     with lock:
+                #         room = rooms.get(room_id)
+
+                #     if not room:
+                #         send_json(sock, {"type": "system", "message": f"You are not in a room"})
+
+                #     if sender != rooms[room_id]["super_admin"]:
+                #         send_json(sock, {"type": "system", "message": "Only owner can bomb a room"})
+                #         continue
+
+                #     broadcast_room(room_id, {
+                #         "type": "system",
+                #         "message": "💣This room is being bombed"
+                #     })
+                #     with lock:
+                #         members = list(room["members"])
+                #         for user in members:
+                #             print(f"[DEBUG_BOMB] Removing {user} from room {room_id}")
+                #             remove_user_from_all_rooms(user)
+
+                #         del rooms[room_id]
+                #         print(f"[DEBUG-BOMB] Deleted room {room_id}")
+
+                #     send_json(sock, {"type": "system", "message": f"💣 Room {room_id} has been destroyed"}, target_username = sender)
+                
                 # ---------- exit -----------------------
                 elif mtype == "exit":
                     print(f"[SERVER] {username} sent exit command. Initiating cleanup.")

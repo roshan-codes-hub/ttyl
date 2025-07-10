@@ -30,13 +30,20 @@ You can open multiple terminals to simulate multiple users.
 
 | Command | Description |
 |--------|-------------|
+| `/whoami` | Gives your username |
 | `/all <msg>` | Send a message to everyone |
 | `/msg <user> <msg>` | Send a private message |
 | `/room create <name>` | Create a new chat room |
 | `/room join <id>` | Join a room by ID |
+| `/room makeadmin <name>` | Makes <name> as admin |
+| `/room remveasadmin <name>` | Removes <name> as admin |
 | `/room leave` | Leave the current room |
 | `/room list` | Show all active rooms |
+| `/room kick <name>` | Kick the user from the room |
+| `/room admins ` | Gives the list of admins of the room |
+| `/roomid` | Show current room ID |
 | `/exit` | Disconnect from the server |
+| `/help ` | Shows the help box(You are looking at it right now 👀) |
 
 ---
 

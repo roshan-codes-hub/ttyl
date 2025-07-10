@@ -10,6 +10,8 @@ STOP_THREADS = False
 
 # ---------- Receive thread --------------------------------------------------
 def _receiver(sock: socket.socket, state: dict):
+    print("[DEBUG-CLIENT] Sender/Receiver loop running") #yes
+
     """
     Listens for JSON messages from the server and prints them.
     Updates state['current_room'] when server confirms room actions.
@@ -42,6 +44,7 @@ def _receiver(sock: socket.socket, state: dict):
 
                 mtype = msg.get("type")
                 # --- System messages we care about ---
+                print(f"[DEBUG-CLIENT] Received message type: {mtype}") #yes
                 if mtype == "system":
                     print(f"[System] {msg.get('message')}")
                 elif mtype == "room_joined":
@@ -76,6 +79,7 @@ def _receiver(sock: socket.socket, state: dict):
 
 # ---------- Send thread -----------------------------------------------------
 def _sender(sock: socket.socket, username: str, state: dict):
+    print("[DEBUG-CLIENT] Sender/Receiver loop running") #yes
     """
     Reads user input, parses commands via commands.parse,
     and sends JSON to server.
@@ -110,6 +114,10 @@ def _sender(sock: socket.socket, username: str, state: dict):
                 pass
             STOP_THREADS = True
             break
+
+        if cmd.payload["type"] == "room_leave":
+            state["current_room"] = None  # Immediately clear the room ID
+            print(f"[DEBUG-CLIENT] Force-cleared current_room due to /room leave")
 
         try:
             sock.sendall((json.dumps(cmd.payload) + "\n").encode())
