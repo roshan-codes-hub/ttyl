@@ -88,6 +88,8 @@ def remove_user_from_all_rooms(username: str):
         for rid, rinfo in list(rooms.items()): # Iterate over a copy of items
             if username in rinfo["members"]:
                 rinfo["members"].remove(username)
+                # Also remove from admins if they were an admin
+                rinfo["admins"].discard(username)
                 print(f"[DEBUG-SERVER] Removed {username} from room {rid}.")
                 # Notify others in that room
                 broadcast_room(
@@ -116,9 +118,19 @@ def handle_client(sock: socket.socket, addr):
 
     try:
         # --- handshake: first line is the username --------------------------
-        sock.settimeout(10) # 10 seconds to send username
-        username_data = sock.recv(1024).decode().strip()
-        sock.settimeout(None) # Remove timeout after handshake
+        sock.settimeout(30) # 30 seconds to send username (increased from 10)
+        try:
+            username_data = sock.recv(1024).decode().strip()
+        except socket.timeout:
+            print(f"[SERVER] Client from {addr} timed out during username handshake.")
+            sock.close()
+            return
+        except (ConnectionResetError, BrokenPipeError, OSError) as e:
+            print(f"[SERVER] Client from {addr} disconnected during handshake: {e}")
+            sock.close()
+            return
+        finally:
+            sock.settimeout(None) # Remove timeout after handshake
 
         if not username_data:
             print(f"[SERVER] Client from {addr} disconnected before sending username.")
@@ -142,11 +154,23 @@ def handle_client(sock: socket.socket, addr):
 
         # --- main loop ------------------------------------------------------
         while True:
-            data = sock.recv(4096)
-            if not data: # Client disconnected gracefully
-                print(f"[SERVER] Client {username} disconnected gracefully.")
+            try:
+                # Use a short timeout to periodically check if we should continue
+                sock.settimeout(1.0)
+                data = sock.recv(4096)
+                sock.settimeout(None)
+                
+                if not data: # Client disconnected gracefully
+                    print(f"[SERVER] Client {username} disconnected gracefully.")
+                    break
+                    
+                buffer += data.decode()
+            except socket.timeout:
+                # This is normal - just continue the loop
+                continue
+            except (ConnectionResetError, BrokenPipeError, OSError) as e:
+                print(f"[SERVER] Client {username} connection lost: {e}")
                 break
-            buffer += data.decode()
 
             while "\n" in buffer:
                 line, buffer = buffer.split("\n", 1)
@@ -327,40 +351,44 @@ def handle_client(sock: socket.socket, addr):
                     room_id = str(msg.get("room_id"))
 
                     if not sender or not target or not room_id:
-                        send_json(sock, {"type": "system", "message": "[ERROR] Invalid admin command."})
-                        return
+                        send_json(sock, {"type": "system", "message": "[ERROR] Invalid admin command."}, target_username=username)
+                        continue
 
-                    if room_id not in rooms:
-                        send_json(sock, {"type": "system", "message": f"Room {room_id} does not exist."})
-                        return
+                    with lock:
+                        room = rooms.get(room_id)
+                        if not room:
+                            send_json(sock, {"type": "system", "message": f"Room {room_id} does not exist."}, target_username=username)
+                            continue
 
-                    if sender not in rooms[room_id]["admins"]:
-                        send_json(sock, {"type": "system", "message": "Only admins can modify admin privileges."})
-                        return
+                        if sender not in room["admins"]:
+                            send_json(sock, {"type": "system", "message": "Only admins can modify admin privileges."}, target_username=username)
+                            continue
 
-                    if target not in rooms[room_id]["members"]:
-                        send_json(sock, {"type": "system", "message": f"{target} is not a member of the room."})
-                        return
+                        if target not in room["members"]:
+                            send_json(sock, {"type": "system", "message": f"{target} is not a member of the room."}, target_username=username)
+                            continue
 
-                    # Apply promote 
-                    
-                    rooms[room_id]["admins"].add(target)
-                    system_msg = f"{target} has been promoted to admin by {sender}."
-                    personal_msg = f"You are promoted to admin for the room {room_id} by {sender}."
-                    
-                    if target in clients:
-                        send_json(clients[target], {
+                        if target in room["admins"]:
+                            send_json(sock, {"type": "system", "message": f"{target} is already an admin."}, target_username=username)
+                            continue
+
+                        # Apply promote 
+                        room["admins"].add(target)
+                        system_msg = f"{target} has been promoted to admin by {sender}."
+                        personal_msg = f"You are promoted to admin for the room {room_id} by {sender}."
+                        
+                        if target in clients:
+                            send_json(clients[target], {
+                                "type": "system",
+                                "message": personal_msg
+                            }, target_username=target)
+
+                        broadcast_room(room_id, {
                             "type": "system",
-                            "message": personal_msg
+                            "message": system_msg
                         })
 
-                    broadcast_room(room_id, {
-                        "type": "system",
-                        "message": system_msg
-                    })
-
-                    print(f"[ADMIN] {sender} performed {mtype} on {target} in room {room_id}")
-
+                        print(f"[ADMIN] {sender} promoted {target} to admin in room {room_id}")
 
                 elif mtype == "room_demote":
                     sender = msg.get("sender")
@@ -368,44 +396,49 @@ def handle_client(sock: socket.socket, addr):
                     room_id = str(msg.get("room_id"))
 
                     if not sender or not target or not room_id:
-                        send_json(sock, {"type": "system", "message": "[ERROR] Invalid admin command."})
+                        send_json(sock, {"type": "system", "message": "[ERROR] Invalid admin command."}, target_username=username)
                         continue
 
-                    if room_id not in rooms:
-                        send_json(sock, {"type": "system", "message": f"Room {room_id} does not exist."})
-                        continue
+                    with lock:
+                        room = rooms.get(room_id)
+                        if not room:
+                            send_json(sock, {"type": "system", "message": f"Room {room_id} does not exist."}, target_username=username)
+                            continue
 
-                    if sender not in rooms[room_id]["admins"]:
-                        send_json(sock, {"type": "system", "message": "Only admins can modify admin privileges."})
-                        continue
+                        if sender not in room["admins"]:
+                            send_json(sock, {"type": "system", "message": "Only admins can modify admin privileges."}, target_username=username)
+                            continue
 
-                    if target not in rooms[room_id]["members"]:
-                        send_json(sock, {"type": "system", "message": f"{target} is not a member of the room."})
-                        continue
+                        if target not in room["members"]:
+                            send_json(sock, {"type": "system", "message": f"{target} is not a member of the room."}, target_username=username)
+                            continue
 
-                    # Protect super admin
-                    if target == rooms[room_id]["super_admin"]:
-                        send_json(sock, {"type": "system", "message": f"{target} cannot be removed as admin. {target} is the owner of the room."})
-                        continue
-                    
-                    # Apply promote 
-                    
-                    rooms[room_id]["admins"].add(target)
-                    system_msg = f"{target} has been promoted to admin by {sender}."
-                    personal_msg = f"You are promoted to admin for the room {room_id} by {sender}."
-                    
-                    if target in clients:
-                        send_json(clients[target], {
+                        # Protect super admin
+                        if target == room["super_admin"]:
+                            send_json(sock, {"type": "system", "message": f"{target} cannot be removed as admin. {target} is the owner of the room."}, target_username=username)
+                            continue
+                        
+                        if target not in room["admins"]:
+                            send_json(sock, {"type": "system", "message": f"{target} is not an admin."}, target_username=username)
+                            continue
+                        
+                        # Apply demote (FIXED: was incorrectly promoting)
+                        room["admins"].discard(target)
+                        system_msg = f"{target} has been demoted from admin by {sender}."
+                        personal_msg = f"You have been demoted from admin for room {room_id} by {sender}."
+                        
+                        if target in clients:
+                            send_json(clients[target], {
+                                "type": "system",
+                                "message": personal_msg
+                            }, target_username=target)
+
+                        broadcast_room(room_id, {
                             "type": "system",
-                            "message": personal_msg
+                            "message": system_msg
                         })
 
-                    broadcast_room(room_id, {
-                        "type": "system",
-                        "message": system_msg
-                    })
-
-                    print(f"[ADMIN] {sender} performed {mtype} on {target} in room {room_id}")
+                        print(f"[ADMIN] {sender} demoted {target} from admin in room {room_id}")
 
                 # ---------- kick a target from the room ---------
                 elif mtype == "room_kick":
@@ -414,57 +447,57 @@ def handle_client(sock: socket.socket, addr):
                     room_id = str(msg.get("room_id"))
 
                     if not sender or not target or not room_id:
-                        send_json(sock, {"type": "system", "message": "[ERROE] Ivalid kick command"})
+                        send_json(sock, {"type": "system", "message": "[ERROR] Invalid kick command"}, target_username=username)
                         continue
                     
-                    if room_id not in rooms:
-                        send_json(sock, {"type": "system", "message": f"Room {room_id} does not exixt"})
-                        continue
-                    
-                    if sender not in rooms[room_id]["admins"]:
-                        send_json(sock, {"type":"system", "message": "Only admins can kick users from this room."})
-                        continue
-                    
-                    if target not in rooms[room_id]["members"]:
-                        send_json(sock, {"type": "system", "message": f"{target} is not in the room {room_id}"})
-                        continue
-                    
-                    if target == rooms[room_id]["super_admin"]:
-                        send_json(sock, {"type": "system", "message": "Cannot kick the owner of the room"})
-                        continue
+                    with lock:
+                        room = rooms.get(room_id)
+                        if not room:
+                            send_json(sock, {"type": "system", "message": f"Room {room_id} does not exist"}, target_username=username)
+                            continue
+                        
+                        if sender not in room["admins"]:
+                            send_json(sock, {"type":"system", "message": "Only admins can kick users from this room."}, target_username=username)
+                            continue
+                        
+                        if target not in room["members"]:
+                            send_json(sock, {"type": "system", "message": f"{target} is not in the room {room_id}"}, target_username=username)
+                            continue
+                        
+                        if target == room["super_admin"]:
+                            send_json(sock, {"type": "system", "message": "Cannot kick the owner of the room"}, target_username=username)
+                            continue
 
-                    # Remove the target from the saved lists
-                    print(f"[DEBUG] Before kicking: members = {rooms[room_id]['members']}, admins = {rooms[room_id]['admins']}")
+                        # Remove the target from the saved lists
+                        print(f"[DEBUG] Before kicking: members = {room['members']}, admins = {room['admins']}")
 
-                    rooms[room_id]["members"].discard(target)
-                    rooms[room_id]["admins"].discard(target)
+                        room["members"].discard(target)
+                        room["admins"].discard(target)
 
-                    print(f"[DEBUG] Before kicking: members = {rooms[room_id]['members']}, admins = {rooms[room_id]['admins']}")
+                        print(f"[DEBUG] After kicking: members = {room['members']}, admins = {room['admins']}")
 
+                        # Notify the kicked user
+                        if target in clients: 
+                            try:
+                                send_json(clients[target], {
+                                    "type": "system",
+                                    "message": f"You were kicked from the room {room_id} by {sender}."
+                                }, target_username=target)
+                                send_json(clients[target], {
+                                    "type": "room_left"
+                                }, target_username=target)
+                            except:
+                                pass
 
-                    # Notifiy the kicked user
-                    if target in clients: 
-                        try:
-                            send_json(clients[target], {
-                                "type": "system",
-                                "message": f"You were kicked from the room {room_id} by {sender}."
-                            })
-                            send_json(clients[target], {
-                                "type": "room_left"
-                            })
-                        except:
-                            pass
+                        print(f"[DEBUG-KICK] Room members for {room_id}: {room['members']}")
 
-                    print(f"[DEBUG-KICK] Room members for {room_id}: {rooms[room_id]['members']}")
+                        # Notify others in the room
+                        broadcast_room(room_id, {
+                            "type":"system", 
+                            "message": f"{target} was kicked from the room by {sender}."
+                        })
 
-
-                    # Notify others in the room
-                    broadcast_room(room_id, {
-                        "type":"system", 
-                        "message": f"{target} was kicked from the room by {sender}."
-                    })
-
-                    print(f"[KICK] {sender} kicked {target} from room {room_id}")
+                        print(f"[KICK] {sender} kicked {target} from room {room_id}")
                     
                 # ----------------- List of room admins ------------------------
                 elif mtype == "room_admins":
@@ -472,6 +505,7 @@ def handle_client(sock: socket.socket, addr):
                     username = msg.get("sender")
                     if not room_id:
                         send_json(sock, {"type": "system", "message": "You are not in room"}, target_username = username)
+                        continue
 
                     with lock:
                         rinfo = rooms.get(room_id)
@@ -481,48 +515,17 @@ def handle_client(sock: socket.socket, addr):
                         continue
 
                     admin_list = list(rinfo["admins"])
-
                     send_json(sock, {"type": "system", "message" : f"Admins in room {room_id}: {admin_list}"}, target_username = username)
-
-                # ----------- Destroy the room ---------------
-                # elif mtype == "room_bomb":
-                #     sender = msg.get("sender")
-                #     room_id = str(msg.get("room_id"))
-
-                #     with lock:
-                #         room = rooms.get(room_id)
-
-                #     if not room:
-                #         send_json(sock, {"type": "system", "message": f"You are not in a room"})
-
-                #     if sender != rooms[room_id]["super_admin"]:
-                #         send_json(sock, {"type": "system", "message": "Only owner can bomb a room"})
-                #         continue
-
-                #     broadcast_room(room_id, {
-                #         "type": "system",
-                #         "message": "💣This room is being bombed"
-                #     })
-                #     with lock:
-                #         members = list(room["members"])
-                #         for user in members:
-                #             print(f"[DEBUG_BOMB] Removing {user} from room {room_id}")
-                #             remove_user_from_all_rooms(user)
-
-                #         del rooms[room_id]
-                #         print(f"[DEBUG-BOMB] Deleted room {room_id}")
-
-                #     send_json(sock, {"type": "system", "message": f"💣 Room {room_id} has been destroyed"}, target_username = sender)
                 
                 # ---------- exit -----------------------
                 elif mtype == "exit":
                     print(f"[SERVER] {username} sent exit command. Initiating cleanup.")
                     break # Break out of the main loop to trigger cleanup
 
-    except (ConnectionResetError, BrokenPipeError, OSError) as e:
-        print(f"[ERROR-SERVER] Connection error for {username} ({addr}): {e}")
     except Exception as e:
         print(f"[ERROR-SERVER] Unhandled error in handle_client for {username} ({addr}): {e}")
+        import traceback
+        traceback.print_exc()
     finally:
         # -------------- cleanup -------------------
         print(f"[SERVER] Cleaning up resources for {username}...")
@@ -536,7 +539,11 @@ def handle_client(sock: socket.socket, addr):
         if username: # Only broadcast global departure if username was successfully registered
             broadcast_global(f"[{username}] left the chat.")
             print(f"[SERVER] {username} disconnected.")
-        sock.close()
+        
+        try:
+            sock.close()
+        except:
+            pass
         print(f"[SERVER] Socket for {username} closed.")
 
 
