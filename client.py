@@ -47,6 +47,14 @@ def _receiver(sock: socket.socket, state: dict):
                 print(f"[DEBUG-CLIENT] Received message type: {mtype}") #yes
                 if mtype == "system":
                     print(f"[System] {msg.get('message')}")
+                elif mtype == "room_created":
+                    state["current_room"] = msg.get("room_id")
+                    print(f"[DEBUG-CLIENT] Client state updated: current_room = {state['current_room']}")
+                    print(
+                        f"[System] Joined room {state['current_room']} "
+                        f"({msg.get('room_name')}) "
+                        "You are the admin now"
+                    )
                 elif mtype == "room_joined":
                     state["current_room"] = msg.get("room_id")
                     print(f"[DEBUG-CLIENT] Client state updated: current_room = {state['current_room']}")
@@ -58,6 +66,16 @@ def _receiver(sock: socket.socket, state: dict):
                     state["current_room"] = None
                     print(f"[DEBUG-CLIENT] Client state updated: current_room = {state['current_room']}")
                     print("[System] Left the current room.")
+                elif mtype == "switch":
+                    target_rid = msg.get("target_rid")
+                    state["current_room"] = target_rid
+                    print(f"[DEBUT-CLIENT] Client state updated: current_room = {state['current_room']}") 
+                    print(
+                        f"[System] Switched to room {state['current_room']} "
+                        f"({msg.get('target_rname')})"
+                    )
+                elif mtype == "join_request":
+                    print(msg.get("message"))
                 elif mtype == "room": # Room specific messages (like broadcasts within a room)
                     print(msg.get("display", f"[{msg.get('room_id', 'Unknown Room')}]: {msg.get('message', 'No message')}"))
                 else:
