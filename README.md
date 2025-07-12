@@ -31,19 +31,24 @@ You can open multiple terminals to simulate multiple users.
 | Command | Description |
 |--------|-------------|
 | `/whoami` | Gives your username |
+| `/rename <new name>` | Change your user name |
 | `/all <msg>` | Send a message to everyone |
 | `/msg <user> <msg>` | Send a private message |
 | `/room create <name>` | Create a new chat room |
 | `/room join <id>` | Join a room by ID |
-| `/room makeadmin <name>` | Makes <name> as admin |
-| `/room remveasadmin <name>` | Removes <name> as admin |
+| `/room mkadmin <user>` | Makes <user> as admin |
+| `/room rmadmin <name>` | Removes <user> as admin |
 | `/room leave` | Leave the current room |
 | `/room list` | Show all active rooms |
-| `/room kick <name>` | Kick the user from the room |
+| `/room users` | Gives list of users in the room |
+| `/room kick <user>` | Kick the user from the room |
+| `/room ban <user>` | Ban the user from the room |
+| `/room switch <room id>` | Switch to room with id <room id> |
 | `/room admins ` | Gives the list of admins of the room |
+| `/room report <user> <reason>` | Report a user in room |
 | `/roomid` | Show current room ID |
 | `/exit` | Disconnect from the server |
-| `/help ` | Shows the help box(You are looking at it right now 👀) |
+| `/help` | Shows the help box (You are looking at it right now 👀) |
 
 ---
 
@@ -54,6 +59,13 @@ You can open multiple terminals to simulate multiple users.
 - `commands.py` – Client-side command parser
 
 ---
+
+## 📌 Notes
+
+- Messages are real-time and text-based.
+- Room messages are only visible to users in that room.
+- Server auto-removes users and announces when someone leaves.
+
 
 ## 📌 Notes
 
