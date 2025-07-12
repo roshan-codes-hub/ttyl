@@ -31,7 +31,6 @@ PORT = 12345
 # ---------- Shared state ----------------------------------------------------
 clients = {}        # username -> socket
 rooms = {}          # room_id -> {"name": str, "members": set[str]}
-room_names = {}
 next_room_id = 1
 lock = threading.Lock() # Global lock for all shared data access
 
@@ -87,8 +86,7 @@ def remove_user_from_all_rooms(username: str):
         empty_rooms = []
         for rid, rinfo in list(rooms.items()): # Iterate over a copy of items
             if username in rinfo["members"]:
-                rinfo["members"].remove(username)
-                # Also remove from admins if they were an admin
+                rinfo["members"].discard(username)
                 rinfo["admins"].discard(username)
                 print(f"[DEBUG-SERVER] Removed {username} from room {rid}.")
                 # Notify others in that room
@@ -109,6 +107,23 @@ def remove_user_from_all_rooms(username: str):
             del rooms[rid]
     print(f"[DEBUG-SERVER] Finished remove_user_from_all_rooms for {username}")
 
+
+# ----------------- remove a user from the room -----------------------------
+# def remove_from_room(username : str, room_id: str):
+#     print(f"[DEBUG-SERVER] Initiating remove_from_room for {username}")
+#     with lock:
+#         if username in rooms[room_id]["members"]:
+#             rooms[room_id]["members"].discard(username)
+#             print(f"[DEBUG-SERVER] removed {username} from {room_id}")
+#             broadcast_room(
+#                     room_id,
+#                     {
+#                         "type": "room",
+#                         "room_id": room_id,
+#                         "display": f"[{username}] left room.",
+#                     },
+#                     exclude_user=username,
+#                 )
 
 # ---------- Client handler --------------------------------------------------
 def handle_client(sock: socket.socket, addr):
@@ -132,6 +147,7 @@ def handle_client(sock: socket.socket, addr):
         finally:
             sock.settimeout(None) # Remove timeout after handshake
 
+        
         if not username_data:
             print(f"[SERVER] Client from {addr} disconnected before sending username.")
             sock.close()
@@ -149,7 +165,7 @@ def handle_client(sock: socket.socket, addr):
             send_json(sock, {
                 "type": "system",
                 "message": f"Welcome {username}! Type /help to view all the commands."
-            })
+            }, target_username= username)
         broadcast_global(f"[{username}] joined the chat.", exclude_sock=sock)
 
         # --- main loop ------------------------------------------------------
@@ -220,6 +236,44 @@ def handle_client(sock: socket.socket, addr):
                             },
                             target_username=username
                         )
+                
+                # ---------- Change username --------------
+                elif mtype == "rename":
+                    new_name = msg.get("new_name")
+
+                    if not new_name:
+                        send_json(sock, {"type": "system", "message": "No new username provided"}, target_username=username)
+                        continue
+
+                    with lock:
+                        if new_name in clients:
+                            send_json(sock, {"type": "system", "message": "Username not available"}, target_username=username)
+                            continue
+
+                        print(f"[DEBUG_RENAME] Proccesing rename for {username}")
+                        clients[new_name] = clients.pop(username)
+
+
+                        for rid, rinfo in rooms.items():
+                            if username in rinfo["members"]:
+                                rinfo["members"].discard(username)
+                                rinfo["members"].add(new_name)
+                            if username in rinfo["admins"]:
+                                rinfo["admins"].discard(username)
+                                rinfo["admins"].add(new_name)
+                            if username == rinfo["super_admin"]:
+                                rinfo["super_admin"] = new_name
+                            if username in rinfo["banned"]:
+                                rinfo["banned"].discard(username)
+                                rinfo["banned"].add(new_name)
+
+                    broadcast_global(f"{username} changed their username to {new_name}", exclude_sock = username)
+                    send_json(sock, {"type": "system", "message": f"Your username has been changed to {new_name}"}, target_username=new_name)
+
+                    print(f"[DEBUG_RENAME] Username of {username} changed to {new_name}")
+
+                    # Updating new_name to client thread
+                    username = new_name
 
                 # ---------- room create ----------------
                 elif mtype == "room_create":
@@ -234,7 +288,7 @@ def handle_client(sock: socket.socket, addr):
                             "members": set(), 
                             "admins": set(), 
                             "super_admin": str, 
-                            "ban": set()}
+                            "banned": set()}
                         # Auto-join creator
                         rooms[new_room_id]["members"].add(username)
                         rooms[new_room_id]["admins"].add(username)
@@ -264,6 +318,7 @@ def handle_client(sock: socket.socket, addr):
                     with lock:
                         rid = str(rid)
                         rinfo = rooms.get(rid)
+                        owner = rooms[rid]["super_admin"]
                     
                     if rinfo:
                         with lock:
@@ -271,6 +326,25 @@ def handle_client(sock: socket.socket, addr):
                             if username in rinfo["members"]:
                                 send_json(sock, {"type": "system", "message": f"You are already in room {rid}."}, target_username=username)
                                 continue
+                            # Check if banned in the room
+                            elif username in rinfo["banned"]:
+                                send_json(sock, {"type": "system", "message": f"You are banned in room {rid}."}, target_username=username)
+                                continue
+
+                            # send_json(clients[owner], {"type": "join_request", "message": f"{username} requested to join the room {rid}. Accept or reject the request(y/n)."},  target_username=owner)
+
+                            # try:
+                            #     permission = sock.recv(1024).decode()
+
+                            #     if permission =="y":
+                            #         rinfo["members"].add(username)
+                            #     elif permission == "n":
+                            #         send_json(sock, {"type": "SYSTEM", "message": f"You request to join room {rid} is rejected by {owner}"}, target_username=username)
+                            #         continue
+                            #     else: send_json(clients[owner], {"type": "system", "message": "Invalid option. Send y (to accept)/n (to reject)"}, target_username=owner)
+                            # except Exception as e:
+                            #     pass
+
                             rinfo["members"].add(username)
                             print(f"[DEBUG-JOIN] Current members in room {rid}: {rinfo['members']}")
                         send_json(
@@ -322,6 +396,14 @@ def handle_client(sock: socket.socket, addr):
                         {"type": "system", "message": f"Available Rooms: {listing}"},
                         target_username=username
                     )
+
+                # ---------- leave from a room ----------
+                # elif mtype == "leave_room":
+                #     print(f"[SERVER] Processing leave room from {username}")
+                #     target = msg.get("target")
+                #     room_id = str(msg.get("room_id"))
+                #     remove_from_room(username, room_id)
+                #     send_json(sock, {"type": "left"}, target_username = target)
 
                 # ---------- room_message ---------------
                 elif mtype == "room_message":
@@ -497,8 +579,86 @@ def handle_client(sock: socket.socket, addr):
                             "message": f"{target} was kicked from the room by {sender}."
                         })
 
-                        print(f"[KICK] {sender} kicked {target} from room {room_id}")
+
+                    print(f"[KICK] {sender} kicked {target} from room {room_id}")
+
+                # ----------------- ban from room -----------------------------    
+                elif mtype == "room_ban":
+                    room_id = str(msg.get("room_id"))
+                    sender = msg.get("sender")
+                    target = msg.get("target")
                     
+                    with lock:
+                        room = rooms.get(room_id)
+
+                        if not sender or not target or not room_id:
+                            send_json(sock, {"type": "system", "message": "[ERROR] Invalid Command!"}, target_username = username)
+                            continue
+
+                        if room_id not in rooms:
+                            send_json(sock, {"type": "system", "message": f"Room {room_id} doesn't exist"}, target_username = username)
+                            continue
+
+                        if sender not in room["admins"]:
+                            send_json(sock, {"type": "system", "message": "Only admins are allowed to ban someone"}, target_username= username)
+                            continue
+
+                        if target not in room["members"]:
+                            send_json(sock, {"type":"system", "message": f"[ERROR] {target} is not in room {room_id}"}, target_username= username)
+                            continue
+
+                        if target == room["super_admin"]:
+                            send_json(sock, {"type": "system", "message": "Cannot ban owner of the room"}, target_username= username)
+                            continue
+
+                        # Remove the target from the saved lists
+                        print(f"[DEBUG] Before banning: members = {room['members']}, admins = {room['admins']}")
+
+                        room["members"].discard(target)
+                        room["admins"].discard(target)
+                        room["banned"].add(target)
+                        print(f"[KICK] {sender} kicked {target} from room {room_id}")
+                        
+                        print(f"[DEBUG] After banning: members = {room['members']}, admins = {room['admins']}")
+
+                        if target in clients:
+                            try:
+                                send_json(clients[target], 
+                                {
+                                    "type": "system",
+                                    "message": "You were banned in the room {room_id} by {sender}"
+                                }, target_username = clients[target])
+                                send_json(clients[target], 
+                                {
+                                    "type": "room_left",
+                                }, target_username = clients[target])
+                            except:
+                                pass
+                        
+                        print(f"[DEBUG-BAN] Room members for room {room_id}: {room['members']}")
+
+                    # Notify others in the room
+                    broadcast_room(room_id, {
+                        "type":"system", 
+                        "message": f"{target} was banned in the room by {sender}."
+                    })
+
+                    print(f"[BAN] {sender} banned {target} in room {room_id}")
+
+                # ---------- List of users in a room -----------
+                elif mtype == "users_list":
+                    rid = str(msg.get("room_id"))
+                    sender = msg.get("sender")
+                    with lock:
+                        rinfo = rooms[rid]
+                        members_list = list(rinfo["members"])
+
+                    print(f"Sending users list of room {rid} to {sender}")
+
+                    send_json(sock, {"type": "system", "message": f"Active users list of room {rid}: {members_list}"}, target_username=owner)
+
+                    print(f"Sent the users list of room {rid} to {sender}")
+
                 # ----------------- List of room admins ------------------------
                 elif mtype == "room_admins":
                     room_id = str(msg.get("room_id"))
@@ -510,12 +670,104 @@ def handle_client(sock: socket.socket, addr):
                     with lock:
                         rinfo = rooms.get(room_id)
 
-                    if not rinfo:
-                        send_json(sock, {"type": "system", "message": f"Room {room_id} does not exist."}, target_username=username)
-                        continue
+                        if not rinfo:
+                            send_json(sock, {"type": "system", "message": f"Room {room_id} does not exist."}, target_username=username)
+                            continue
 
-                    admin_list = list(rinfo["admins"])
-                    send_json(sock, {"type": "system", "message" : f"Admins in room {room_id}: {admin_list}"}, target_username = username)
+                        admin_list = list(rinfo["admins"])
+                        send_json(sock, {"type": "system", "message" : f"Admins in room {room_id}: {admin_list}"}, target_username = username)
+
+                # ----------- Switching room -----------------
+                elif mtype == "room_switch":
+                    room_id = str(msg.get("room_id"))
+                    target_rid = str(msg.get("target_rid"))
+                    sender = msg.get("sender")
+
+                    #  Condition checking
+                    with lock:
+                        try:
+                            if not sender or not room_id or not target_rid:
+                                send_json(sock, {"type": "system", "message": "[ERROR] Invalid Command!"}, target_username = username)
+                                continue
+
+                            if room_id not in rooms:
+                                send_json(sock, {"type": "system", "message": f"Room {room_id} doesn't exist"}, target_username = username)
+                                continue
+
+                            if target_rid not in rooms:
+                                send_json(sock, {"type": "system", "message": f"Room {target_rid} doesn't exist"}, target_username = username)
+                                continue
+
+                            if sender not in rooms[target_rid]["members"]:
+                                send_json(sock, {"type": "system", "message": f"You didn't joined this room yet"}, target_username=username)
+                        except (Exception, SystemExit, KeyboardInterrupt) as e:
+                            send_json(sock, {"type": "system", "message": f"[ERROR] Some unknown error occured"}, target_username = username)
+
+                        print(f"[DEBUG-SWITCH] Switch request processing for {sender} ...")
+
+                        send_json(sock, {"type": "switch", "target_rid": target_rid, "curr_rid": room_id, "target_rname" : rooms[target_rid]["name"]}, target_username = sender)
+
+                    print(f"[DEBUG-SWITCH] {sender} switched to room {target_rid} ({rooms[target_rid]['name']})")
+
+                # ---------- report a user in room -----------
+                elif mtype == "report_user":
+                    sender = msg.get("sender")
+                    target = msg.get("target")
+                    room_id = str(msg.get("room_id"))
+                    reason = msg.get("reason")
+
+                    with lock:
+                        owner = rooms[room_id]["super_admin"]
+
+                        # condition check
+                        try:
+                            if not sender or not target or not room_id:
+                                send_json(sock, {"type": "system", "message": "Invalid Command!"}, target_username=sender)
+                                continue
+                            if target not in rooms[room_id]["members"]:
+                                send_json(sock, {"type": "system", "message": f"{target} is not in this room"}, target_username=sender)
+                                continue
+                        except Exception as e:
+                            send_json(sock, {"type": "system", "message": "Some unknown error occured."}, target_username=sender)
+
+                        print(f"[DEBUG-REPORT] Proccesing report from {sender} in room {room_id} on {target}")
+
+                        # sending report to owner of the room
+                        send_json(clients[owner], {"type": "system", "message": f"[REPORT] {sender} sent a report on {target} for {reason}"}, target_username=owner)
+                        send_json(sock, {"type": "system", "message": "Report sent successfully"}, target_username=sender)
+
+                    print(f"[DEBUG-REPORT] Report sent to {owner}")
+                    
+
+                # ----------- Destroy the room ---------------
+                # elif mtype == "room_bomb":
+                #     sender = msg.get("sender")
+                #     room_id = str(msg.get("room_id"))
+
+                #     with lock:
+                #         room = rooms.get(room_id)
+
+                #     if not room:
+                #         send_json(sock, {"type": "system", "message": f"You are not in a room"})
+
+                #     if sender != rooms[room_id]["super_admin"]:
+                #         send_json(sock, {"type": "system", "message": "Only owner can bomb a room"})
+                #         continue
+
+                #     broadcast_room(room_id, {
+                #         "type": "system",
+                #         "message": "💣This room is being bombed"
+                #     })
+                #     with lock:
+                #         members = list(room["members"])
+                #         for user in members:
+                #             print(f"[DEBUG_BOMB] Removing {user} from room {room_id}")
+                #             remove_user_from_all_rooms(user)
+
+                #         del rooms[room_id]
+                #         print(f"[DEBUG-BOMB] Deleted room {room_id}")
+
+                #     send_json(sock, {"type": "system", "message": f"💣 Room {room_id} has been destroyed"}, target_username = sender)
                 
                 # ---------- exit -----------------------
                 elif mtype == "exit":
