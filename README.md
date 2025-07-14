@@ -47,6 +47,7 @@ You can open multiple terminals to simulate multiple users.
 | `/room admins ` | Gives the list of admins of the room |
 | `/room report <user> <reason>` | Report a user in room |
 | `/roomid` | Show current room ID |
+| `/achievements` | Show current achievements of the user |
 | `/exit` | Disconnect from the server |
 | `/help` | Shows the help box (You are looking at it right now 👀) |
 
