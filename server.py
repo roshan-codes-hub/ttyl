@@ -34,6 +34,60 @@ rooms = {}          # room_id -> {"name": str, "members": set[str]}
 next_room_id = 1
 lock = threading.Lock() # Global lock for all shared data access
 
+# ---------- Achievements state ----------------------------------------------
+ACHIEVEMENT_LIST = {
+    "first_words": "First Words",
+    "chatterbox": "Chatterbox",
+    "keyboard_warrior": "Keyboard Warrior",
+    "private_talker": "Private Talker",
+    "social_butterfly": "Social Butterfly",
+    "roomie": "Roomie",
+    "loner_no_more": "Loner No More",
+    "room_creator": "Room Creator",
+    "explorer": "Explorer"
+}
+achievements = {}   # username -> {achievement_code: bool}
+user_stats = {}     # username -> stats dict
+
+def unlock_achievement(username, code, sock=None):
+    with lock:
+        if username not in achievements:
+            achievements[username] = {}
+        if achievements[username].get(code):
+            return
+        achievements[username][code] = True
+    if sock is None:
+        with lock:
+            sock = clients.get(username)
+    if sock:
+        send_json(sock, {
+            "type": "achievement",
+            "code": code,
+            "name": ACHIEVEMENT_LIST[code],
+            "message": f"Achievement Unlocked: {ACHIEVEMENT_LIST[code]}"
+        }, target_username=username)
+        print(f"[ACHIEVEMENT] {username} unlocked {ACHIEVEMENT_LIST[code]}")
+
+def update_user_stats(username, key, value=1):
+    with lock:
+        if username not in user_stats:
+            user_stats[username] = {
+                "messages_sent": 0,
+                "private_sent": 0,
+                "private_targets": set(),
+                "rooms_joined": set(),
+                "rooms_created": 0
+            }
+        if key == "private_targets":
+            user_stats[username][key].add(value)
+        elif key == "rooms_joined":
+            user_stats[username][key].add(value)
+        elif key == "rooms_created":
+            user_stats[username][key] += value
+        else:
+            user_stats[username][key] += value
+
+    print(f"[DEBUG-STATS] Updated stats for {username}: {user_stats[username]}")
 # ---------- Helper functions ------------------------------------------------
 def send_json(sock: socket.socket, data: dict, target_username: str = "Unknown"):
     """Send dict as JSON + newline, handling potential socket errors."""
@@ -161,12 +215,24 @@ def handle_client(sock: socket.socket, addr):
                 sock.close()
                 return
             clients[username] = sock
+            # Initialize achievements and stats
+            if username not in achievements:
+                achievements[username] = {}
+            if username not in user_stats:
+                user_stats[username] = {
+                    "messages_sent": 0,
+                    "private_sent": 0,
+                    "private_targets": set(),
+                    "rooms_joined": set(),
+                    "rooms_created": 0
+                }
             print(f"[SERVER] {username} connected from {addr}")
             send_json(sock, {
                 "type": "system",
                 "message": f"Welcome {username}! Type /help to view all the commands."
             }, target_username= username)
         broadcast_global(f"[{username}] joined the chat.", exclude_sock=sock)
+        print(f"[SERVER] {username} has joined the server.")
 
         # --- main loop ------------------------------------------------------
         while True:
@@ -206,6 +272,15 @@ def handle_client(sock: socket.socket, addr):
                     print(f"[SERVER] Processing broadcast from {username}")
                     text = f"[{msg.get('sender', 'Unknown')}]: {msg.get('message', '')}"
                     broadcast_global(text)
+                    # Achievements: First Words, Chatterbox, Keyboard Warrior
+                    update_user_stats(username, "messages_sent")
+                    count = user_stats[username]["messages_sent"]
+                    if count == 1:
+                        unlock_achievement(username, "first_words", sock)
+                    if count == 10:
+                        unlock_achievement(username, "chatterbox", sock)
+                    if count == 50:
+                        unlock_achievement(username, "keyboard_warrior", sock)
 
                 # ---------- private --------------------
                 elif mtype == "private":
@@ -227,6 +302,13 @@ def handle_client(sock: socket.socket, addr):
                             },
                             target_username=recipient
                         )
+                        # Achievements: Private Talker, Social Butterfly
+                        update_user_stats(username, "private_sent")
+                        update_user_stats(username, "private_targets", recipient)
+                        if user_stats[username]["private_sent"] == 1:
+                            unlock_achievement(username, "private_talker", sock)
+                        if len(user_stats[username]["private_targets"]) == 5:
+                            unlock_achievement(username, "social_butterfly", sock)
                     else:
                         send_json(
                             sock,
@@ -236,7 +318,7 @@ def handle_client(sock: socket.socket, addr):
                             },
                             target_username=username
                         )
-                
+                         
                 # ---------- Change username --------------
                 elif mtype == "rename":
                     new_name = msg.get("new_name")
@@ -293,6 +375,10 @@ def handle_client(sock: socket.socket, addr):
                         rooms[new_room_id]["members"].add(username)
                         rooms[new_room_id]["admins"].add(username)
                         rooms[new_room_id]["super_admin"] = username
+                        # Achievements: Room Creator
+                        update_user_stats(username, "rooms_created")
+                        if user_stats[username]["rooms_created"] == 1:
+                            unlock_achievement(username, "room_creator", sock)
 
                     send_json(
                         sock,
@@ -331,21 +417,18 @@ def handle_client(sock: socket.socket, addr):
                                 send_json(sock, {"type": "system", "message": f"You are banned in room {rid}."}, target_username=username)
                                 continue
 
-                            # send_json(clients[owner], {"type": "join_request", "message": f"{username} requested to join the room {rid}. Accept or reject the request(y/n)."},  target_username=owner)
-
-                            # try:
-                            #     permission = sock.recv(1024).decode()
-
-                            #     if permission =="y":
-                            #         rinfo["members"].add(username)
-                            #     elif permission == "n":
-                            #         send_json(sock, {"type": "SYSTEM", "message": f"You request to join room {rid} is rejected by {owner}"}, target_username=username)
-                            #         continue
-                            #     else: send_json(clients[owner], {"type": "system", "message": "Invalid option. Send y (to accept)/n (to reject)"}, target_username=owner)
-                            # except Exception as e:
-                            #     pass
-
+                            already_members = len(rinfo["members"]) > 0
                             rinfo["members"].add(username)
+                            update_user_stats(username, "rooms_joined", rid)
+                            # Roomie
+                            if len(user_stats[username]["rooms_joined"]) == 1:
+                                unlock_achievement(username, "roomie", sock)
+                            # Explorer
+                            if len(user_stats[username]["rooms_joined"]) == 3:
+                                unlock_achievement(username, "explorer", sock)
+                            # Loner No More
+                            if already_members:
+                                unlock_achievement(username, "loner_no_more", sock)
                             print(f"[DEBUG-JOIN] Current members in room {rid}: {rinfo['members']}")
                         send_json(
                             sock,
@@ -768,6 +851,20 @@ def handle_client(sock: socket.socket, addr):
                 #         print(f"[DEBUG-BOMB] Deleted room {room_id}")
 
                 #     send_json(sock, {"type": "system", "message": f"💣 Room {room_id} has been destroyed"}, target_username = sender)
+                
+                # ---------- get achievements -----------
+                elif mtype == "get_achievements":
+                    with lock:
+                        user_ach = achievements.get(username, {})
+                        unlocked = [ACHIEVEMENT_LIST[k] for k, v in user_ach.items() if v]
+                    if unlocked:
+                        pretty = "Your unlocked achievements:\n" + "\n".join(f"  - {a}" for a in unlocked)
+                    else:
+                        pretty = "You haven't unlocked any achievements yet."
+                    send_json(sock, {
+                        "type": "system",
+                        "message": pretty
+                    }, target_username=username)
                 
                 # ---------- exit -----------------------
                 elif mtype == "exit":

@@ -43,6 +43,7 @@ def _receiver(sock: socket.socket, state: dict):
                     continue
 
                 mtype = msg.get("type")
+
                 # --- System messages we care about ---
                 print(f"[DEBUG-CLIENT] Received message type: {mtype}") #yes
                 if mtype == "system":
@@ -78,6 +79,8 @@ def _receiver(sock: socket.socket, state: dict):
                     print(msg.get("message"))
                 elif mtype == "room": # Room specific messages (like broadcasts within a room)
                     print(msg.get("display", f"[{msg.get('room_id', 'Unknown Room')}]: {msg.get('message', 'No message')}"))
+                elif mtype == "get_achievement":
+                    print(f"\n🎉 {msg.get('message')} ({msg.get('name')})\n")
                 else:
                     # Fallback: server already rendered 'display' or
                     # simply show raw message
@@ -195,3 +198,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+

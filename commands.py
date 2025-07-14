@@ -10,6 +10,7 @@ Returned value: Command(raw, payload, error)
 
 from dataclasses import dataclass
 from typing import Dict, Any, Optional
+import json
 
 @dataclass
 class Command:
@@ -78,6 +79,7 @@ def parse(user_input: str, username: str, current_room: Optional[str]) -> Comman
                 "/room report <user> <reason> - Report a user in room\n"
                 "/roomid                      - Show current room ID\n"
                 "/exit                        - Exit the chat\n"
+                "/achievements                - Show your achievements\n"
                 "/help                        - Show this help message"
             )
             return Command(user_input, {"type": "help", "sender": username}, message=help_box, error=None)
@@ -252,9 +254,14 @@ def parse(user_input: str, username: str, current_room: Optional[str]) -> Comman
             else:
                 return Command(user_input, {"type": "room_id", "sender": username}, 
                              error=None, message="You are not in any room currently.")
+            
+        if cmd == "achievements":
+            return Command(user_input, {"type": "get_achievements", "sender": username}, 
+                           error=None, message="Fetching your achievements...")
 
         # Unknown command
         return Command(user_input, None, error=f"Unknown command: /{cmd}")
 
     except IndexError:
         return Command(user_input, None, error="Incomplete command")
+
