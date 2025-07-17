@@ -27,7 +27,6 @@ You can open multiple terminals to simulate multiple users.
 ---
 
 ## 💬 Commands
-
 | Command | Description |
 |--------|-------------|
 | `/whoami` | Gives your username |
@@ -36,21 +35,23 @@ You can open multiple terminals to simulate multiple users.
 | `/msg <user> <msg>` | Send a private message |
 | `/room create <name>` | Create a new chat room |
 | `/room join <id>` | Join a room by ID |
-| `/room mkadmin <user>` | Makes <user> as admin |
-| `/room rmadmin <name>` | Removes <user> as admin |
+| `/room mkadmin <user>` | Make a user an admin in the room |
+| `/room rmadmin <user>` | Remove a user from admin role |
 | `/room leave` | Leave the current room |
 | `/room list` | Show all active rooms |
-| `/room users` | Gives list of users in the room |
+| `/room users` | List users in the current room |
 | `/room kick <user>` | Kick the user from the room |
-| `/room ban <user>` | Ban the user from the room |
-| `/room switch <room id>` | Switch to room with id <room id> |
-| `/room admins ` | Gives the list of admins of the room |
-| `/room report <user> <reason>` | Report a user in room |
+| `/room ban <user>` | Ban the user (by username) from the room |
+| `/room banmac <user>` | Ban the user's MAC address from the room |
+| `/room bannedmacs` | Show MAC-banned users in the current room |
+| `/room unbanmac <user>` | Unban the user's MAC (super admin only) |
+| `/room switch <room id>` | Switch to another joined room |
+| `/room admins` | Show list of admins in the current room |
+| `/room report <user> <reason>` | Report a user in the room |
 | `/roomid` | Show current room ID |
-| `/achievements` | Show current achievements of the user |
+| `/achievements` | Show your unlocked achievements |
 | `/exit` | Disconnect from the server |
-| `/help` | Shows the help box (You are looking at it right now 👀) |
-
+| `/help` | Show this help message |
 ---
 
 ## 📂 Files
