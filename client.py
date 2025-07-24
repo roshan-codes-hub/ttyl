@@ -4,12 +4,91 @@ import socket
 import threading
 import sys
 import commands
+import base64
+
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives import hashes
+import os
 
 # Global flag to signal threads to stop
 STOP_THREADS = False
+client_priv_key = None
 
+
+def generate_keys():
+    """Generate RSA key pair"""
+    private_key = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=2048
+    )
+    public_key = private_key.public_key()
+    return private_key, public_key
+
+def save_keys(private_key, public_key, filename_prefix):
+    """Save keys to files"""
+    # Save private key
+    with open(f"{filename_prefix}_private.pem", "wb") as f:
+        f.write(private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption()
+        ))
+    
+    # Save public key
+    with open(f"{filename_prefix}_public.pem", "wb") as f:
+        f.write(public_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo
+        ))
+
+def load_private_key(filename):
+    """Load private key from file"""
+    with open(filename, "rb") as key_file:
+        return serialization.load_pem_private_key(
+            key_file.read(),
+            password=None
+        )
+
+def load_public_key(filename):
+    """Load public key from file"""
+    with open(filename, "rb") as key_file:
+        return serialization.load_pem_public_key(
+            key_file.read()
+        )
+
+def encrypt_message(message, public_key):
+    """Encrypt a message with RSA public key"""
+    encrypted = public_key.encrypt(
+        message.encode(),
+        padding.OAEP(
+            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None
+        )
+    )
+    return base64.b64encode(encrypted).decode()
+
+def decrypt_message(encrypted_message, private_key):
+    """Decrypt a message with RSA private key"""
+    try:
+        decrypted = private_key.decrypt(
+            base64.b64decode(encrypted_message.encode()),
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None
+            )
+        )
+        return decrypted.decode()
+    except Exception as e:
+        print(f"[ERROR] Decryption failed: {e}")
+        return None
+    
+    
 # ---------- Receive thread --------------------------------------------------
-def _receiver(sock: socket.socket, state: dict):
+def _receiver(sock: socket.socket, state: dict , client_priv_key):
     print("[DEBUG-CLIENT] Sender/Receiver loop running") #yes
 
     """
@@ -36,7 +115,11 @@ def _receiver(sock: socket.socket, state: dict):
                     continue
 
                 try:
-                    msg = json.loads(line)
+                    decrypted = decrypt_message(line, client_priv_key)
+                    if decrypted:
+                        msg = json.loads(decrypted)
+                    else:
+                        msg = json.loads(line)
                     print(f"[DEBUG-CLIENT] Received from server: {msg}")
                 except json.JSONDecodeError:
                     print(f"[ERROR-CLIENT] Malformed message from server: {line}")
@@ -159,7 +242,7 @@ def main():
     host = input("Server IP (default 127.0.0.1): ") or "127.0.0.1"
     port = int(input("Port (default 12345): ") or "12345")
     username = input("Username: ").strip()
-
+    client_priv_key = load_private_key("client_private.pem")
     if not username:
         print("Username cannot be empty. Exiting.")
         sys.exit(1)
@@ -174,6 +257,29 @@ def main():
         print(f"Network error: {e}")
         sys.exit(1)
 
+        if not os.path.exists("client_private.pem"):
+        priv_key, pub_key = generate_keys()
+        save_keys(priv_key, pub_key, "client")
+    
+    # Load client keys
+    client_priv_key = load_private_key("client_private.pem")
+    client_pub_key = load_public_key("client_public.pem")
+    
+    # Receive server's public key
+    data = sock.recv(4096).decode()
+    server_pub_key = serialization.load_pem_public_key(
+        json.loads(data)["public_key"].encode()
+    )
+    
+    # Send client's public key to server
+    sock.sendall(json.dumps({
+        "type": "key_exchange",
+        "public_key": client_pub_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo
+        ).decode()
+    }).encode())
+    
     try:
         sock.sendall((username + "\n").encode())
     except (BrokenPipeError, ConnectionResetError, OSError) as e:
@@ -183,7 +289,7 @@ def main():
 
     state = {"current_room": None}
 
-    receiver_thread = threading.Thread(target=_receiver, args=(sock, state), daemon=True)
+    receiver_thread = threading.Thread(target=_receiver, args=(sock, state,client_priv_key), daemon=True,)
     receiver_thread.start()
 
     _sender(sock, username, state)
@@ -197,6 +303,7 @@ def main():
 
 
 if __name__ == "__main__":
+    if not os.path.exists("server_private.pem"):
+        priv_key, pub_key = generate_keys()
+        save_keys(priv_key, pub_key, "server")
     main()
-
-

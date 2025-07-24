@@ -25,6 +25,14 @@ import socket
 import threading
 import time
 
+import base64
+
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives import hashes
+import os
+
 HOST = "0.0.0.0"
 PORT = 12345
 
@@ -33,7 +41,8 @@ clients = {}        # username -> socket
 rooms = {}          # room_id -> {"name": str, "members": set[str]}
 next_room_id = 1
 lock = threading.Lock() # Global lock for all shared data access
-
+client_keys = {}  # username -> public_key
+public_key = None
 # ---------- Achievements state ----------------------------------------------
 ACHIEVEMENT_LIST = {
     "first_words": "First Words",
@@ -48,6 +57,75 @@ ACHIEVEMENT_LIST = {
 }
 achievements = {}   # username -> {achievement_code: bool}
 user_stats = {}     # username -> stats dict
+
+def generate_keys():
+    """Generate RSA key pair"""
+    private_key = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=2048
+    )
+    public_key = private_key.public_key()
+    return private_key, public_key
+
+def save_keys(private_key, public_key, filename_prefix):
+    """Save keys to files"""
+    # Save private key
+    with open(f"{filename_prefix}_private.pem", "wb") as f:
+        f.write(private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption()
+        ))
+    
+    # Save public key
+    with open(f"{filename_prefix}_public.pem", "wb") as f:
+        f.write(public_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo
+        ))
+
+def load_private_key(filename):
+    """Load private key from file"""
+    with open(filename, "rb") as key_file:
+        return serialization.load_pem_private_key(
+            key_file.read(),
+            password=None
+        )
+
+def load_public_key(filename):
+    """Load public key from file"""
+    with open(filename, "rb") as key_file:
+        return serialization.load_pem_public_key(
+            key_file.read()
+        )
+
+def encrypt_message(message, public_key):
+    """Encrypt a message with RSA public key"""
+    encrypted = public_key.encrypt(
+        message.encode(),
+        padding.OAEP(
+            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None
+        )
+    )
+    return base64.b64encode(encrypted).decode()
+
+def decrypt_message(encrypted_message, private_key):
+    """Decrypt a message with RSA private key"""
+    try:
+        decrypted = private_key.decrypt(
+            base64.b64decode(encrypted_message.encode()),
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None
+            )
+        )
+        return decrypted.decode()
+    except Exception as e:
+        print(f"[ERROR] Decryption failed: {e}")
+        return None
 
 def unlock_achievement(username, code, sock=None):
     with lock:
@@ -92,16 +170,14 @@ def update_user_stats(username, key, value=1):
 def send_json(sock: socket.socket, data: dict, target_username: str = "Unknown"):
     """Send dict as JSON + newline, handling potential socket errors."""
     try:
-        message = json.dumps(data) + "\n"
-        sock.sendall(message.encode())
-        print(f"[DEBUG-SERVER] Sent to {target_username}: {data}")
-    except (BrokenPipeError, ConnectionResetError, OSError) as e:
-        # These errors mean the client disconnected.
-        # The handle_client function's finally block will deal with cleanup.
-        print(f"[ERROR-SERVER] Error sending to socket for {target_username}: {e}. Client likely disconnected.")
-        # Do not re-raise, allow the client handling thread to clean up.
+        message = json.dumps(data)
+        if public_key:  # If we have recipient's public key
+            encrypted = encrypt_message(message, public_key)
+            sock.sendall((encrypted + "\n").encode())
+        else:
+            sock.sendall((message + "\n").encode())
     except Exception as e:
-        print(f"[ERROR-SERVER] Unexpected error sending JSON to {target_username}: {e}")
+        print(f"[ERROR] Error sending message: {e}")
 
 def broadcast_global(msg: str, exclude_sock=None):
     """Send plain system text to every client."""
@@ -231,6 +307,29 @@ def handle_client(sock: socket.socket, addr):
                 "type": "system",
                 "message": f"Welcome {username}! Type /help to view all the commands."
             }, target_username= username)
+        
+            server_pub_key = load_public_key("server_public.pem")
+            send_json(sock, {
+                "type": "key_exchange",
+                "public_key": server_pub_key.public_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PublicFormat.SubjectPublicKeyInfo
+                ).decode()
+            })
+
+            try:
+                msg = json.loads(sock.recv(4096).decode())
+                if msg.get("type") == "key_exchange":
+                    client_pub_key = serialization.load_pem_public_key(
+                        msg["public_key"].encode()
+                    )
+                    with lock:
+                        client_keys[username] = client_pub_key
+            except Exception as e:
+                print(f"[ERROR] Key exchange failed: {e}")
+                sock.close()
+                return
+        
         broadcast_global(f"[{username}] joined the chat.", exclude_sock=sock)
         print(f"[SERVER] {username} has joined the server.")
 
@@ -925,4 +1024,7 @@ def main():
 
 
 if __name__ == "__main__":
+    if not os.path.exists("server_private.pem"):
+        priv_key, pub_key = generate_keys()
+        save_keys(priv_key, pub_key, "server")
     main()
