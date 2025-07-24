@@ -1,6 +1,3 @@
-"""guys i made the client.py part and a rough version of a server to handle the request for chat rooms
-and other commands without any authencation or admin stuff"""
-
 
 A simple terminal-based chat system using Python sockets with support for:
 
