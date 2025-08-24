@@ -65,9 +65,3 @@ You can open multiple terminals to simulate multiple users.
 - Room messages are only visible to users in that room.
 - Server auto-removes users and announces when someone leaves.
 
-
-## 📌 Notes
-
-- Messages are real-time and text-based.
-- Room messages are only visible to users in that room.
-- Server auto-removes users and announces when someone leaves.
